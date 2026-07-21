@@ -1,0 +1,16 @@
+[package]
+name = "iren"
+version = "0.1.0"
+edition = "2021"
+description = "Interactive readline-style file renamer"
+license = "MIT"
+
+[[bin]]
+name = "iren"
+path = "src/main.rs"
+
+[dependencies]
+libc = "0.2"
+
+[profile.release]
+opt-level = 2
