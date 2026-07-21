@@ -1,9 +1,10 @@
 //! A minimal, readline-like single-line editor. Talks to the terminal
-//! purely through vt102/ANSI CSI escape sequences (cursor-left/right,
-//! erase-to-end-of-line) issued over stdout, and raw bytes read from
-//! stdin via `term::read_event`. No screen clearing: each prompt is
-//! rendered on the terminal's current line, and finishing a prompt just
-//! advances to a fresh line, the same way a shell would.
+//! purely through vt102/ANSI CSI escape sequences (cursor-left/right/
+//! up/down, erase-to-end-of-line) issued over stdout, and raw bytes read
+//! from stdin via `term::read_event`. No screen clearing: each file gets
+//! exactly one terminal line for its whole lifetime, and Up/Down move
+//! the cursor between those lines with plain vt102 cursor-motion
+//! sequences rather than repainting the screen.
 
 use crate::term::{self, Event, Key, RawGuard};
 use std::io::{self, Write};
@@ -12,19 +13,25 @@ pub enum EditResult {
     Confirmed(String),
     /// User asked to leave this entry alone (Ctrl-D on an empty line).
     Skipped,
+    /// Up/Down arrow pressed; carries the buffer as last edited so the
+    /// caller can preserve it if it navigates elsewhere.
+    NavigateUp(String),
+    NavigateDown(String),
 }
 
 /// Runs interactive line editing for one filename. `prefix` is a fixed,
 /// non-editable label printed before the editable text (e.g. "(1/3) ").
-/// `initial` seeds the editable buffer and is also what a bare Escape
-/// keypress reverts to.
+/// `seed` is the text to start editing from (a prior in-progress edit,
+/// if the user navigated back to this entry, or the original name for a
+/// fresh entry); `original` is what a bare Escape keypress reverts to.
 pub fn edit_line(
     out: &mut impl Write,
     raw: &mut RawGuard,
     prefix: &str,
-    initial: &str,
+    seed: &str,
+    original: &str,
 ) -> io::Result<EditResult> {
-    let mut buf: Vec<char> = initial.chars().collect();
+    let mut buf: Vec<char> = seed.chars().collect();
     let mut cursor = buf.len();
 
     redraw(out, prefix, &buf, cursor)?;
@@ -69,6 +76,8 @@ pub fn edit_line(
                     0x1b => match term::parse_escape()? {
                         Key::Left => cursor = cursor.saturating_sub(1),
                         Key::Right => cursor = (cursor + 1).min(buf.len()),
+                        Key::Up => return Ok(EditResult::NavigateUp(buf.into_iter().collect())),
+                        Key::Down => return Ok(EditResult::NavigateDown(buf.into_iter().collect())),
                         Key::Home => cursor = 0,
                         Key::End => cursor = buf.len(),
                         Key::Delete => {
@@ -78,7 +87,7 @@ pub fn edit_line(
                         }
                         Key::Bare => {
                             // Standalone Escape: revert to the original text.
-                            buf = initial.chars().collect();
+                            buf = original.chars().collect();
                             cursor = buf.len();
                         }
                         Key::Unknown => bell(out)?,
@@ -111,7 +120,7 @@ fn kill_word_back(buf: &mut Vec<char>, cursor: &mut usize) {
     *cursor = start;
 }
 
-fn bell(out: &mut impl Write) -> io::Result<()> {
+pub fn bell(out: &mut impl Write) -> io::Result<()> {
     write!(out, "\x07")?;
     out.flush()
 }
@@ -130,6 +139,25 @@ fn redraw(out: &mut impl Write, prefix: &str, buf: &[char], cursor: usize) -> io
     let back = buf.len() - cursor;
     if back > 0 {
         write!(out, "\x1b[{}D", back)?; // cursor left `back` columns
+    }
+    out.flush()
+}
+
+/// Repaints the current line in place with fixed, non-editable text (used
+/// for a finalized entry's result, and for the inline overwrite-confirm
+/// prompt). The cursor is simply left at the end of `text`.
+pub fn render_static(out: &mut impl Write, text: &str) -> io::Result<()> {
+    write!(out, "\r{text}\x1b[K")?;
+    out.flush()
+}
+
+/// Moves the cursor vertically by `delta` rows (negative = up, positive =
+/// down) using the standard vt102 CUU/CUD sequences. A no-op for 0.
+pub fn move_rows(out: &mut impl Write, delta: isize) -> io::Result<()> {
+    match delta.cmp(&0) {
+        std::cmp::Ordering::Less => write!(out, "\x1b[{}A", -delta)?,
+        std::cmp::Ordering::Greater => write!(out, "\x1b[{delta}B")?,
+        std::cmp::Ordering::Equal => {}
     }
     out.flush()
 }

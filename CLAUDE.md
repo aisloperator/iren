@@ -8,8 +8,9 @@ This file guides Claude Code (claude.ai/code) when working in this repository.
 
 `iren` is a Rust CLI that interactively renames files, editing each
 filename readline-style directly on the terminal. It takes multiple
-filenames as arguments and processes them one at a time, moving to the
-next file when the user presses Enter.
+filenames as arguments, prints one line per file up front, and lets the
+user move Enter-by-Enter through not-yet-renamed files or jump between
+them with Up/Down.
 
 ## Hard constraint: minimal dependencies
 
@@ -30,16 +31,38 @@ is needed.
 - `src/term.rs` — raw termios mode (`RawGuard`), signal handling
   (`SIGINT`/`SIGTERM`/`SIGQUIT`/`SIGWINCH`/`SIGTSTP` via `sigaction`,
   with the stop/resume dance for Ctrl-Z), and vt102/CSI escape-sequence
-  parsing (arrow keys, Home/End, Delete) using a short `poll(2)`
-  timeout to distinguish a bare Escape from a longer sequence. Also
-  home to UTF-8 continuation-byte reading for stdin.
+  parsing (arrow keys including Up/Down, Home/End, Delete) using a short
+  `poll(2)` timeout to distinguish a bare Escape from a longer sequence.
+  Also home to UTF-8 continuation-byte reading for stdin.
 - `src/editor.rs` — the single-line, readline-like editor: cursor
-  motion, kill/delete operations, Escape-to-revert, redraw logic. The
-  redraw function is the only place that emits ANSI control sequences
-  for repainting (`\r`, `ESC[K`, `ESC[nD`); it never clears the screen.
-- `src/main.rs` — argument parsing, per-file orchestration (skip
-  missing files, confirm before overwriting an existing target, call
-  `std::fs::rename`), and the y/n overwrite prompt.
+  motion, kill/delete operations, Escape-to-revert, and the redraw
+  logic. `redraw` repaints the current line in place (`\r`, `ESC[K`,
+  `ESC[nD`); `render_static` paints a line with fixed, non-editable text
+  (a finalized entry's result, or the inline overwrite-confirm prompt);
+  `move_rows` moves the cursor vertically between file lines (`ESC[nA`
+  / `ESC[nB`). None of these ever clear the screen. Up/Down arrow
+  keypresses surface from `edit_line` as `EditResult::NavigateUp`/
+  `NavigateDown` carrying the in-progress buffer — `editor.rs` has no
+  idea which other file line to jump to, since it doesn't know about
+  the rest of the file list; that decision belongs to `main.rs`.
+- `src/main.rs` — argument parsing, and the whole multi-file session in
+  `run()`: prints one line per file up front (`line_text`), tracks each
+  file's `LineState` (`Pending(Vec<char>)` while editable, `Done(String)`
+  once finalized), and on Up/Down/Enter/Ctrl-D-skip decides which file
+  line to move to next (`find_prev_pending` / `find_next_pending`, which
+  search cyclically and skip `Done` entries), calling `editor::move_rows`
+  to get there. Also handles the missing-file check, the y/n overwrite
+  prompt, and `std::fs::rename` itself.
+
+The one-line-per-file, fixed-line-count invariant is what makes Up/Down
+navigation tractable without a curses-style full-screen redraw: every
+file's line, once printed, never changes row position for the rest of
+the session (even after being finalized, its `Done` text is repainted
+*in place* on that same row via `render_static`), so the vertical
+distance between any two files is simply the difference of their
+indices, and `ESC[nA`/`ESC[nB` gets the cursor there directly. Preserve
+this invariant if you touch `run()` — don't insert or remove printed
+lines mid-session.
 
 Signals are handled with `AtomicBool` flags set from `extern "C"`
 handlers and polled after `EINTR` from blocking `read`/`poll` calls
@@ -77,11 +100,18 @@ else:
 ```
 
 Check both the transcript (for correct escape sequences / prompts) and
-the resulting filenames on disk. This is how the initial implementation
-was validated: renames, Escape-revert, Ctrl-D skip-on-empty, overwrite
-confirm/decline, Ctrl-W word deletion, UTF-8 filenames, and Ctrl-C
-aborting mid-session (checking the exit code and that untouched files
-stay untouched) were all exercised this way.
+the resulting filenames on disk. This is how the implementation has
+been validated: renames, Escape-revert, Ctrl-D skip-on-empty, overwrite
+confirm/decline, Ctrl-W word deletion, UTF-8 filenames, Ctrl-C aborting
+mid-session (checking the exit code and that untouched files stay
+untouched), and Up/Down navigation (send `\x1b[A`/`\x1b[B`; verify the
+transcript's `ESC[nA`/`ESC[nB` deltas match the expected row distance,
+including wraparound once some files are already finalized) were all
+exercised this way.
+
+Note the row-movement approach only works within one terminal screen
+(see the README limitations section) — a pty test with a very long
+file list won't necessarily reflect real-terminal scrolling behavior.
 
 ## Conventions
 

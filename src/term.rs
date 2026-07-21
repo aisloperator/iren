@@ -222,6 +222,8 @@ pub fn read_event() -> io::Result<Event> {
 pub enum Key {
     Left,
     Right,
+    Up,
+    Down,
     Home,
     End,
     Delete,
@@ -268,6 +270,8 @@ fn parse_csi() -> io::Result<Key> {
         Event::Redraw => return Ok(Key::Unknown),
     };
     match b2 {
+        b'A' => Ok(Key::Up),
+        b'B' => Ok(Key::Down),
         b'C' => Ok(Key::Right),
         b'D' => Ok(Key::Left),
         b'H' => Ok(Key::Home),
