@@ -7,6 +7,10 @@ each filename given on the command line, it lets you edit the name
 readline-style, right on the terminal, then presses on to the next
 not-yet-renamed file when you hit Enter.
 
+The human originally implemented an `iren` in Rust years ago; this
+AI-generated implementation does the same job without any crate
+dependencies (see [Design](#design) below).
+
 ## Usage
 
 ```
