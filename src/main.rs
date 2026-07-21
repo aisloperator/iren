@@ -237,6 +237,13 @@ fn advance(
         }
         None => {
             editor::move_rows(out, n as isize - current as isize)?;
+            // move_rows is a pure cursor-up/down (CUU/CUD) move and
+            // preserves the column; every other call site is immediately
+            // followed by edit_line's redraw (which starts with \r), but
+            // this is the final move of the session, so nothing else
+            // resets the column afterwards -- do it here instead.
+            write!(out, "\r")?;
+            out.flush()?;
             Ok(None)
         }
     }
