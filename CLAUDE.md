@@ -64,6 +64,23 @@ indices, and `ESC[nA`/`ESC[nB` gets the cursor there directly. Preserve
 this invariant if you touch `run()` — don't insert or remove printed
 lines mid-session.
 
+That invariant only holds if every file's line is still on screen,
+though: `ESC[nA` (cursor-up) is clamped at row 1 by every real
+terminal, so if printing N lines up front scrolled the earliest ones
+into scrollback, a later "move up to row 0" instead lands on whatever
+row is now topmost and overwrites it -- `current` stays correct
+internally (so no file is ever renamed wrong), but the display becomes
+actively misleading. `main()` guards against this before printing
+anything, via `term::terminal_rows` (`TIOCGWINSZ`): if the file count
+is `>=` the terminal's row count, it refuses to start rather than let
+the display corrupt itself. This was verified empirically with `tmux`
+(a real terminal emulator that enforces cursor-motion clamping, unlike
+a bare pty) at `-y 6` with 10 files: without the guard, row 0's line
+silently overwrote row 6's; with it, `iren` exits 1 with an explanation
+before entering raw mode. The check is skipped if the row count can't
+be determined (e.g. plain ptys in test harnesses, which normally never
+have `TIOCSWINSZ` called on them, report `ws_row == 0`).
+
 Signals are handled with `AtomicBool` flags set from `extern "C"`
 handlers and polled after `EINTR` from blocking `read`/`poll` calls
 (handlers avoid doing anything not async-signal-safe). Fatal signals

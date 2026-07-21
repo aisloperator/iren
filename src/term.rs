@@ -330,3 +330,16 @@ pub fn read_utf8_char(first: u8) -> io::Result<Option<char>> {
 pub fn is_tty(fd: i32) -> bool {
     unsafe { libc::isatty(fd) == 1 }
 }
+
+/// The terminal's current row count via `TIOCGWINSZ`, or `None` if it
+/// can't be determined (not a tty, or the ioctl reports an unknown size
+/// -- some pseudo-terminals never have their size set at all).
+pub fn terminal_rows(fd: i32) -> Option<u16> {
+    unsafe {
+        let mut ws: libc::winsize = std::mem::zeroed();
+        if libc::ioctl(fd, libc::TIOCGWINSZ, &mut ws) != 0 || ws.ws_row == 0 {
+            return None;
+        }
+        Some(ws.ws_row)
+    }
+}

@@ -66,6 +66,24 @@ fn main() {
         std::process::exit(1);
     }
 
+    // Every file gets one fixed terminal row for the whole session, and
+    // Up/Down/Enter navigate between rows with plain cursor-up/down --
+    // which every terminal clamps at the screen edge. If the file list
+    // doesn't fit on screen, the earliest rows scroll into scrollback and
+    // become unreachable, so a later "move up to row 0" instead lands on
+    // whatever row is currently topmost and overwrites it, silently
+    // corrupting the display. Refuse up front rather than let that happen.
+    if let Some(rows) = term::terminal_rows(libc::STDOUT_FILENO) {
+        if files.len() >= rows as usize {
+            eprintln!(
+                "{prog}: {} files won't fit in a {rows}-row terminal (iren needs the whole list on screen at once to navigate reliably)",
+                files.len()
+            );
+            eprintln!("{prog}: make the terminal taller, or rename these in smaller batches");
+            std::process::exit(1);
+        }
+    }
+
     let mut entries: Vec<FileEntry> = files
         .into_iter()
         .map(|orig| {

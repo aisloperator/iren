@@ -90,6 +90,10 @@ The binary is written to `target/release/iren`.
 - Cursor math counts Unicode scalar values, not display width, so
   wide/combining characters may misalign the cursor slightly.
 - Up/Down navigation relies on cursor-relative vertical movement within
-  a single terminal screen. If the file list is longer than the
-  terminal's visible height, lines that have scrolled off the top may
-  not be reachable this way.
+  a single terminal screen, which every terminal clamps at the screen
+  edge. Since the whole file list needs to fit on screen at once for
+  that to work, `iren` checks the terminal's row count (`TIOCGWINSZ`)
+  at startup and refuses to run if there are too many files for it,
+  rather than silently corrupting the display. Make the terminal
+  taller, or process files in smaller batches, if you hit this. (If the
+  row count can't be determined at all, this check is skipped.)
